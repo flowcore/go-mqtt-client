@@ -6,7 +6,7 @@ import (
 )
 
 type config struct {
-	clientID          string
+	clientId          string
 	broker            string
 	username          string
 	password          string
@@ -24,6 +24,12 @@ type config struct {
 }
 
 type ClientOption func(*client)
+
+func WithClientId(clientId string) ClientOption {
+	return func(c *client) {
+		c.config.clientId = clientId
+	}
+}
 
 func WithUsername(username string) ClientOption {
 	return func(c *client) {

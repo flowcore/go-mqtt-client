@@ -19,7 +19,7 @@ var ErrEmptyBroker = errors.New("broker must be provided")
 var ErrConnectionClosedForReconnect = errors.New("connection closed for reconnect")
 var ErrConnectionStopped = errors.New("connection stopped")
 var ErrNotConnack = errors.New("not connack packet")
-var ErrSubackReturnedFalureCode = errors.New("suback returned failure")
+var ErrSubackReturnedFailureCode = errors.New("suback returned failure")
 
 type QosLevel = byte
 
@@ -70,8 +70,8 @@ func NewClient(broker string, opts ...ClientOption) (Client, error) {
 	if client.config.broker == "" {
 		return nil, ErrEmptyBroker
 	}
-	if client.config.clientID == "" {
-		client.config.clientID = fmt.Sprintf("%s-%d", "go", time.Now().Unix())
+	if client.config.clientId == "" {
+		client.config.clientId = fmt.Sprintf("%s-%d", "go", time.Now().Unix())
 	}
 	if client.config.connectTimeout == 0 {
 		client.config.connectTimeout = time.Second * 10
@@ -165,7 +165,7 @@ func (c *client) Subscribe(ctx context.Context, topic string, qos QosLevel, hand
 		if err == nil {
 			for _, code := range packet.ReturnCodes {
 				if code == SubackFailure {
-					err = ErrSubackReturnedFalureCode
+					err = ErrSubackReturnedFailureCode
 				}
 			}
 		}
@@ -265,7 +265,7 @@ func (c *client) connect() (net.Conn, error) {
 
 func (_ *client) buildConnectPacket(config *config) (*packets.ConnectPacket, error) {
 	connectPacket := packets.NewControlPacket(packets.Connect).(*packets.ConnectPacket)
-	connectPacket.ClientIdentifier = config.clientID
+	connectPacket.ClientIdentifier = config.clientId
 
 	if config.username != "" {
 		connectPacket.Username = config.username

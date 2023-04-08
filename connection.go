@@ -53,14 +53,14 @@ func (c *factory) Create(broker string) (net.Conn, error) {
 	switch u.Scheme {
 	case "tls":
 		if c.dialer != nil {
-			return tls.DialWithDialer(c.dialer, "tcp", c.getAddress(u.Host, port), c.tlsConfig)
+			return tls.DialWithDialer(c.dialer, "tcp", c.getAddress(u.Hostname(), port), c.tlsConfig)
 		}
-		return tls.Dial("tcp", c.getAddress(u.Host, port), c.tlsConfig)
+		return tls.Dial("tcp", c.getAddress(u.Hostname(), port), c.tlsConfig)
 	case "tcp":
 		if c.dialer != nil {
-			return c.dialer.Dial("tcp", c.getAddress(u.Host, port))
+			return c.dialer.Dial("tcp", c.getAddress(u.Hostname(), port))
 		}
-		return net.Dial("tcp", c.getAddress(u.Host, port))
+		return net.Dial("tcp", c.getAddress(u.Hostname(), port))
 	default:
 		return nil, ErrUnsupportedScheme
 	}
