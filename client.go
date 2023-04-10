@@ -159,10 +159,10 @@ func (c *client) Subscribe(ctx context.Context, topic string, qos QosLevel, hand
 	sendFuture := c.send(ctx, packet, true)
 	go func() {
 		<-sendFuture.Done()
-		packet := sendFuture.Value().(*packets.SubackPacket)
+		packet, ok := sendFuture.Value().(*packets.SubackPacket)
 		err := sendFuture.Error()
 
-		if err == nil {
+		if ok && err == nil {
 			for _, code := range packet.ReturnCodes {
 				if code == SubackFailure {
 					err = ErrSubackReturnedFailureCode
@@ -198,7 +198,7 @@ func (c *client) Unsubscribe(ctx context.Context, topic string) Future[packets.U
 	sendFuture := c.send(ctx, packet, true)
 	go func() {
 		<-sendFuture.Done()
-		packet := sendFuture.Value().(*packets.UnsubackPacket)
+		packet, _ := sendFuture.Value().(*packets.UnsubackPacket)
 		err := sendFuture.Error()
 
 		if err != nil {
