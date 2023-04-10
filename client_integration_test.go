@@ -44,10 +44,16 @@ func (suite *IntegrationTestSuite) startMqttServer() error {
 		Ledger: &auth.Ledger{
 			Auth: auth.AuthRules{ // Auth disallows all by default
 				{Username: "test", Password: "test", Allow: true},
+				{Username: "test2", Password: "test2", Allow: true},
 			},
 			ACL: auth.ACLRules{
 				{
 					Username: "test", Filters: auth.Filters{
+						"#": auth.ReadWrite,
+					},
+				},
+				{
+					Username: "test2", Filters: auth.Filters{
 						"#": auth.ReadWrite,
 					},
 				},
@@ -269,6 +275,98 @@ func (suite *IntegrationTestSuite) TestKeepalive() {
 			suite.T().Fatal("timed out")
 		}
 	}, mqtt.WithKeepAliveInterval(time.Millisecond*50))
+}
+
+func (suite *IntegrationTestSuite) TestSubscribeAndUnsubscribe() {
+	suite.withConnectedClient(func(client mqtt.Client) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*4)
+		defer cancel()
+
+		receivedPacket := make(chan packets.PublishPacket)
+		fut := client.Subscribe(ctx, "test/subscribe", mqtt.QosLevel1, func(client mqtt.Client, packet packets.PublishPacket) error {
+			receivedPacket <- packet
+			return nil
+		})
+		<-fut.Done()
+		require.NoError(suite.T(), fut.Error())
+
+		expectedPayload := []byte("some payload")
+		err := suite.server.Publish("test/subscribe", expectedPayload, false, mqtt.QosLevel1)
+		require.NoError(suite.T(), err)
+
+		select {
+		case packet := <-receivedPacket:
+			assert.Equal(suite.T(), "test/subscribe", packet.TopicName)
+			assert.Equal(suite.T(), mqtt.QosLevel1, packet.Qos)
+			assert.Equal(suite.T(), expectedPayload, packet.Payload)
+		case <-time.After(time.Second * 4):
+			suite.T().Fatal("timed out")
+		}
+
+		unsubFut := client.Unsubscribe(ctx, "test/subscribe")
+		<-unsubFut.Done()
+
+		assert.NoError(suite.T(), unsubFut.Error())
+	})
+}
+
+func (suite *IntegrationTestSuite) TestReconnect() {
+	statusChan := make(chan mqtt.ConnectionStatus)
+	client := suite.createClient(mqtt.WithOnConnectionStatusHandler(func(client mqtt.Client, status mqtt.ConnectionStatus) {
+		statusChan <- status
+	}))
+
+	clientContext, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+	clientReturnChan := make(chan error, 1)
+	go func() {
+		clientReturnChan <- client.Run(clientContext)
+	}()
+
+	iteration := 0
+	for {
+		select {
+		case err := <-clientReturnChan:
+			assert.NoError(suite.T(), err)
+			return
+		case status := <-statusChan:
+			switch iteration {
+			case 0:
+				assert.Equal(suite.T(), mqtt.Connecting, status.Code)
+			case 1:
+				assert.Equal(suite.T(), mqtt.Connected, status.Code)
+				client.Reconnect()
+			case 2:
+				assert.Equal(suite.T(), mqtt.Disconnected, status.Code)
+			case 3:
+				assert.Equal(suite.T(), mqtt.Connecting, status.Code)
+			case 4:
+				assert.Equal(suite.T(), mqtt.Connected, status.Code)
+
+				c, ok := suite.server.Clients.Get("test")
+				require.True(suite.T(), ok)
+				assert.Equal(suite.T(), []byte("test"), c.Properties.Username)
+
+				client.ReconnectWithCredentials("test2", "test2")
+			case 5:
+				assert.Equal(suite.T(), mqtt.Disconnected, status.Code)
+			case 6:
+				assert.Equal(suite.T(), mqtt.Connecting, status.Code)
+			case 7:
+				assert.Equal(suite.T(), mqtt.Connected, status.Code)
+
+				c, ok := suite.server.Clients.Get("test")
+				require.True(suite.T(), ok)
+				assert.Equal(suite.T(), []byte("test2"), c.Properties.Username)
+
+				return
+			}
+			iteration++
+		case <-time.After(time.Second * 4):
+			suite.T().Fatal("timed out")
+			return
+		}
+	}
 }
 
 func (suite *IntegrationTestSuite) createClient(opts ...mqtt.ClientOption) mqtt.Client {
