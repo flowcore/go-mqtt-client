@@ -6,15 +6,16 @@ import (
 )
 
 type config struct {
-	clientId          string
-	broker            string
-	username          string
-	password          string
-	cleanSession      bool
-	connectTimeout    time.Duration
-	disconnectTimeout time.Duration
-	keepAliveInterval time.Duration
-	keepAliveTimeout  time.Duration
+	clientId                  string
+	broker                    string
+	username                  string
+	password                  string
+	cleanSession              bool
+	connectTimeout            time.Duration
+	connectBackoffMaxInterval time.Duration
+	disconnectTimeout         time.Duration
+	keepAliveInterval         time.Duration
+	keepAliveTimeout          time.Duration
 
 	onConnectionStatusHandler OnConnectionStatusHandler
 	onReceiveHandler          OnReceiveHandler
@@ -52,6 +53,12 @@ func WithCleanSession(clean bool) ClientOption {
 func WithConnectTimeout(timeout time.Duration) ClientOption {
 	return func(c *client) {
 		c.config.connectTimeout = timeout
+	}
+}
+
+func WithConnectBackoffMaxInterval(maxInterval time.Duration) ClientOption {
+	return func(c *client) {
+		c.config.connectBackoffMaxInterval = maxInterval
 	}
 }
 

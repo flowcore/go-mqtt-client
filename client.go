@@ -8,6 +8,7 @@ import (
 	"github.com/eclipse/paho.mqtt.golang/packets"
 	"golang.org/x/exp/slog"
 	"io"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -76,6 +77,9 @@ func NewClient(broker string, opts ...ClientOption) (Client, error) {
 	}
 	if client.config.connectTimeout == 0 {
 		client.config.connectTimeout = time.Second * 10
+	}
+	if client.config.connectBackoffMaxInterval == 0 {
+		client.config.connectBackoffMaxInterval = time.Minute * 10
 	}
 	if client.config.disconnectTimeout == 0 {
 		client.config.disconnectTimeout = time.Second * 5
@@ -309,6 +313,10 @@ func (_ *client) buildDisconnectPacket() *packets.DisconnectPacket {
 
 func (c *client) run(ctx context.Context) error {
 	bo := backoff.NewExponentialBackOff()
+	bo.MaxInterval = c.config.connectBackoffMaxInterval
+	bo.Stop = c.config.connectBackoffMaxInterval
+	bo.MaxElapsedTime = time.Duration(math.MaxInt64)
+	bo.Reset()
 
 Connect:
 	for {
