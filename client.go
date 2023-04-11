@@ -118,7 +118,10 @@ func (c *client) ReconnectWithCredentials(username string, password string) {
 }
 
 func (c *client) Reconnect() {
-	c.reconnectChan <- true
+	select {
+	case c.reconnectChan <- true:
+	default:
+	}
 }
 
 func (c *client) Run(ctx context.Context) error {
@@ -343,7 +346,6 @@ Connect:
 			sendReceiveErr = err
 		case <-c.reconnectChan:
 			c.logger.Info("reconnect signal received")
-			break
 		case <-ctx.Done():
 			sendReceiveReconnect = false
 		}
