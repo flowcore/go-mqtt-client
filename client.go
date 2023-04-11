@@ -52,6 +52,7 @@ type Client interface {
 	Unsubscribe(ctx context.Context, topic string) Future[packets.UnsubackPacket]
 	ReconnectWithCredentials(username string, password string)
 	Reconnect()
+	Status() ConnectionStatus
 }
 
 func NewClient(broker string, opts ...ClientOption) (Client, error) {
@@ -92,11 +93,17 @@ func NewClient(broker string, opts ...ClientOption) (Client, error) {
 	client.reconnectChan = make(chan any)
 	client.sendChan = make(chan packets.ControlPacket)
 
+	client.status = ConnectionStatus{
+		Code: Stopped,
+		Err:  nil,
+	}
+
 	return client, nil
 }
 
 type client struct {
 	running atomic.Bool
+	status  ConnectionStatus
 
 	config *config
 	logger *slog.Logger
@@ -216,6 +223,10 @@ func (c *client) Unsubscribe(ctx context.Context, topic string) Future[packets.U
 		returnFuture.Complete(*packet, nil)
 	}()
 	return returnFuture
+}
+
+func (c *client) Status() ConnectionStatus {
+	return c.status
 }
 
 func (c *client) connect() (net.Conn, error) {
@@ -407,6 +418,7 @@ func (c *client) setConnectionStatus(code ConnectionStatusCode, err error) {
 		Code: code,
 		Err:  err,
 	}
+	c.status = status
 	if c.config.onConnectionStatusHandler != nil {
 		go c.config.onConnectionStatusHandler(c, status)
 	}
