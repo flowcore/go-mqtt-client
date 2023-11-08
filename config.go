@@ -1,7 +1,7 @@
 package mqtt
 
 import (
-	"golang.org/x/exp/slog"
+	"log/slog"
 	"time"
 )
 
