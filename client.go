@@ -373,38 +373,51 @@ Connect:
 
 		// shutdown sending, receiving, and keepalive
 		connectionContextCancel()
+		if sendReceiveErr != nil {
+			// Closing a failed connection releases any blocked socket I/O.
+			_ = conn.Close()
+		} else {
+			// Bound in-flight I/O before waiting for the sender. Keep the
+			// connection open long enough to send a graceful DISCONNECT.
+			_ = conn.SetDeadline(time.Now().Add(c.config.disconnectTimeout))
+		}
 		<-senderDoneChan
 		<-receiverDoneChan
 		<-keepaliverDoneChan
 
 		// close the connection
-		if conn != nil {
+		if sendReceiveErr == nil {
 			_ = conn.SetWriteDeadline(time.Now().Add(c.config.disconnectTimeout))
-			err := c.buildDisconnectPacket().Write(conn)
-			if err != nil {
+			if err := c.buildDisconnectPacket().Write(conn); err != nil {
 				c.logger.Debug("failed to send disconnect packet", slogErr(err))
 			}
-			err = conn.Close()
+			err := conn.Close()
 			if err != nil {
 				c.logger.Debug("failed to close connection", slogErr(err))
 			}
 		}
 
+		// Release pending requests before clearing subscriptions: a running
+		// subscription handler may be waiting for a publish to complete.
+		flushErr := sendReceiveErr
+		if !sendReceiveReconnect {
+			flushErr = ErrConnectionStopped
+		} else if flushErr == nil {
+			flushErr = ErrConnectionClosedForReconnect
+		}
+		_ = c.signaler.Flush(flushErr)
 		c.subscriptionManager.Flush()
 
-		// update the connection status and flush the signaler
+		// update the connection status
 		if !sendReceiveReconnect {
 			c.logger.Info("stopped")
-			_ = c.signaler.Flush(ErrConnectionStopped)
 			c.setConnectionStatus(Stopped, nil)
 			return sendReceiveErr
 		} else {
 			c.logger.Info("disconnected")
 			if sendReceiveErr != nil {
-				_ = c.signaler.Flush(sendReceiveErr)
 				c.setConnectionStatus(Disconnected, sendReceiveErr)
 			} else {
-				_ = c.signaler.Flush(ErrConnectionClosedForReconnect)
 				c.setConnectionStatus(Disconnected, nil)
 			}
 		}
@@ -455,7 +468,8 @@ func (c *client) send(ctx context.Context, packet packets.ControlPacket, signal 
 func (c *client) sender(ctx context.Context, conn io.Writer, sendChan <-chan packets.ControlPacket) (<-chan error, <-chan any) {
 	c.logger.Debug("sender started")
 
-	errChan := make(chan error)
+	// Each worker reports at most one error, even if run has stopped reading.
+	errChan := make(chan error, 1)
 	doneChan := make(chan any)
 	go func() {
 		defer func() {
@@ -482,14 +496,16 @@ func (c *client) sender(ctx context.Context, conn io.Writer, sendChan <-chan pac
 func (c *client) receiver(ctx context.Context, conn io.Reader) (<-chan error, <-chan any) {
 	c.logger.Debug("receiver started")
 
-	errChan := make(chan error)
+	errChan := make(chan error, 1)
 	doneChan := make(chan any)
 	go func() {
 		defer func() {
 			close(doneChan)
 			c.logger.Debug("receiver stopped")
 		}()
-		resultChan := make(chan Result[packets.ControlPacket])
+		// A read completing after cancellation must not leave its goroutine
+		// blocked delivering a result to the stopped receiver.
+		resultChan := make(chan Result[packets.ControlPacket], 1)
 		for {
 			go func() {
 				packet, err := packets.ReadPacket(conn)
@@ -547,7 +563,7 @@ func (c *client) ack(ctx context.Context, p packets.PublishPacket) {
 }
 
 func (c *client) keepaliver(ctx context.Context) (<-chan error, <-chan any) {
-	errChan := make(chan error)
+	errChan := make(chan error, 1)
 	doneChan := make(chan any)
 
 	if c.config.keepAliveInterval <= 0 {
