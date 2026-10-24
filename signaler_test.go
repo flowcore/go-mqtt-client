@@ -145,6 +145,8 @@ func Test_signaler_Flush(t *testing.T) {
 	})
 
 	si := s.(*signalerImpl)
+	si.mutex.Lock()
+	defer si.mutex.Unlock()
 	assert.Empty(t, si.requests)
 }
 

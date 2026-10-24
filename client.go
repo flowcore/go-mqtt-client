@@ -43,6 +43,9 @@ type ConnectionStatus struct {
 	Err  error
 }
 
+// OnConnectionStatusHandler receives transitions asynchronously in order, without
+// overlapping calls for a client. Handlers should return promptly: pending
+// transitions are queued, and Run does not wait for their delivery.
 type OnConnectionStatusHandler func(client Client, status ConnectionStatus)
 type OnReceiveHandler func(client Client, packet packets.PublishPacket) error
 
@@ -107,7 +110,11 @@ func NewClient(broker string, opts ...ClientOption) (Client, error) {
 
 type client struct {
 	running atomic.Bool
-	status  ConnectionStatus
+
+	statusMutex       sync.Mutex
+	status            ConnectionStatus
+	statusQueue       []ConnectionStatus
+	statusDispatching bool
 
 	config *config
 	logger *slog.Logger
@@ -230,6 +237,8 @@ func (c *client) Unsubscribe(ctx context.Context, topic string) Future[packets.U
 }
 
 func (c *client) Status() ConnectionStatus {
+	c.statusMutex.Lock()
+	defer c.statusMutex.Unlock()
 	return c.status
 }
 
@@ -439,9 +448,35 @@ func (c *client) setConnectionStatus(code ConnectionStatusCode, err error) {
 		Code: code,
 		Err:  err,
 	}
+	c.statusMutex.Lock()
+	defer c.statusMutex.Unlock()
 	c.status = status
 	if c.config.onConnectionStatusHandler != nil {
-		go c.config.onConnectionStatusHandler(c, status)
+		c.statusQueue = append(c.statusQueue, status)
+		if !c.statusDispatching {
+			c.statusDispatching = true
+			go c.dispatchStatuses()
+		}
+	}
+}
+
+// A single worker drains transitions across Run calls. It never holds the lock
+// while invoking application code and exits when idle, so no shutdown join or
+// permanently parked worker is needed.
+func (c *client) dispatchStatuses() {
+	for {
+		c.statusMutex.Lock()
+		if len(c.statusQueue) == 0 {
+			c.statusQueue = nil
+			c.statusDispatching = false
+			c.statusMutex.Unlock()
+			return
+		}
+		status := c.statusQueue[0]
+		c.statusQueue[0] = ConnectionStatus{}
+		c.statusQueue = c.statusQueue[1:]
+		c.statusMutex.Unlock()
+		c.config.onConnectionStatusHandler(c, status)
 	}
 }
 
